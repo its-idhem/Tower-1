@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sandtrix</title>
+    <!-- Using Google Fonts for a retro feel -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom CSS for Sandtrix Retro Style */
+        body {
+            font-family: 'Press Start 2P', cursive; /* Pixelated font */
+            background-color: #000000; /* Black background */
+            color: #FFFFFF; /* White text */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: hidden; /* Prevent scrollbars */
+            text-transform: uppercase;
+        }
+
+        /* Adding a subtle CRT screen effect */
+        body::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 2;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+
+        canvas {
+            border: 4px solid #FFFFFF;
+            background-color: #1a1a1a; /* Dark gray background for game area */
+            display: block;
+            margin: auto;
+            box-shadow: 0 0 10px #fff, 0 0 20px #fff, 0 0 30px #0ff; /* Neon glow effect */
+        }
+
+        .game-container {
+            border: 4px solid #FFFFFF;
+            padding: 1.5rem;
+            background-color: #111111;
+            box-shadow: 0 0 15px #fff, 0 0 25px #f0f;
+        }
+
+        .info-panel h1 {
+            text-shadow: 0 0 5px #fff, 0 0 10px #fff, 0 0 20px #ff00de, 0 0 30px #ff00de;
+        }
+
+        #startButton {
+            background-color: #1a1a1a;
+            border: 2px solid #fff;
+            color: #fff;
+            transition: all 0.2s ease-in-out;
+            box-shadow: inset 0 0 5px #fff;
+        }
+
+        #startButton:hover {
+            background-color: #fff;
+            color: #000;
+            box-shadow: 0 0 10px #fff, 0 0 15px #0ff;
+        }
+
+        #gameOverMessage {
+            text-shadow: 0 0 10px #f00, 0 0 20px #f00;
+        }
+
+        #messageBox {
+            border: 2px solid;
+            text-align: center;
+        }
+    </style>
+</head>
+<body class="p-4">
+    <div class="game-container flex flex-col md:flex-row items-center justify-center gap-8">
+        <!-- Left Info Panel -->
+        <div class="info-panel flex flex-col gap-4 text-center md:text-left">
+            <h1 class="text-4xl font-bold text-cyan-400 mb-4">Tower 1</h1>
+            <p class="text-lg">Score: <span id="score" class="font-semibold text-yellow-300">0</span></p>
+            <p class="text-lg">Level: <span id="level" class="font-semibold text-green-300">1</span></p>
+            <p class="text-lg mt-4">Next:</p>
+            <canvas id="nextBlockCanvas" width="120" height="120"></canvas>
+            <button id="startButton" class="mt-4 px-6 py-3 font-bold rounded-none shadow-md transform hover:scale-105">Start Game</button>
+            <div id="gameOverMessage" class="hidden mt-4 text-red-500 font-bold text-2xl">Game Over!</div>
+            <div id="messageBox" class="hidden mt-4 p-3 text-sm"></div>
+        </div>
+        <!-- Main Game Canvas -->
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <!-- Main Game Script -->
+    <script type="module">
+        // --- Global Game Configuration ---
+        const LOGICAL_BOARD_WIDTH = 10;
+        const LOGICAL_BOARD_HEIGHT = 20;
+        const SUBDIVISION = 5; // Each logical block is 5x5 particles
+        const PARTICLE_SIZE = 6; // Size of one sand particle in pixels
+        
+        const PARTICLE_GRID_WIDTH = LOGICAL_BOARD_WIDTH * SUBDIVISION;
+        const PARTICLE_GRID_HEIGHT = LOGICAL_BOARD_HEIGHT * SUBDIVISION;
+        const BOARD_COLOR = '#1a1a1a';
+
+        // --- Game State Variables ---
+        let gameBoard = [];
+        let currentBlock = null;
+        let nextBlock = null;
+        let score = 0;
+        let level = 1;
+        let gameOver = false;
+        let gameStarted = false;
+        let isSandFalling = false;
+        let animationFrameId = null;
+
+        // --- Game Timing Variables ---
+        let dropInterval = 1000;
+        let lastDropTime = 0;
+        let sandFallInterval = 30; // Faster sand physics for more particles
+        let lastSandFallTime = 0;
+
+        // --- Canvas and UI Elements ---
+        const gameCanvas = document.getElementById('gameCanvas');
+        const gameCtx = gameCanvas.getContext('2d');
+        const nextBlockCanvas = document.getElementById('nextBlockCanvas');
+        const nextBlockCtx = nextBlockCanvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+        const levelDisplay = document.getElementById('level');
+        const startButton = document.getElementById('startButton');
+        const gameOverMessage = document.getElementById('gameOverMessage');
+        const messageBox = document.getElementById('messageBox');
+
+        // --- Block Definitions (Tetrominoes) ---
+        const TETROMINOES = {
+            'I': { shape: [[0,0,0,0], [1,1,1,1], [0,0,0,0], [0,0,0,0]], color: '#00FFFF' },
+            'J': { shape: [[1,0,0], [1,1,1], [0,0,0]], color: '#0000FF' },
+            'L': { shape: [[0,0,1], [1,1,1], [0,0,0]], color: '#FFA500' },
+            'O': { shape: [[1,1], [1,1]], color: '#FFFF00' },
+            'S': { shape: [[0,1,1], [1,1,0], [0,0,0]], color: '#00FF00' },
+            'T': { shape: [[0,1,0], [1,1,1], [0,0,0]], color: '#800080' },
+            'Z': { shape: [[1,1,0], [0,1,1], [0,0,0]], color: '#FF0000' }
+        };
+
+        // --- Utility Functions ---
+        function showMessageBox(message, type = 'info') {
+            messageBox.textContent = message;
+            messageBox.className = `mt-4 p-3 text-sm`; // Reset classes
+            switch (type) {
+                case 'success': messageBox.classList.add('bg-green-800', 'text-green-300', 'border-green-300'); break;
+                case 'error': messageBox.classList.add('bg-red-800', 'text-red-300', 'border-red-300'); break;
+                case 'info': default: messageBox.classList.add('bg-blue-800', 'text-blue-300', 'border-blue-300'); break;
+            }
+            messageBox.classList.remove('hidden');
+            setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
+        }
+
+        function initializeBoard() {
+            gameBoard = Array(PARTICLE_GRID_HEIGHT).fill(null).map(() => Array(PARTICLE_GRID_WIDTH).fill(null));
+        }
+
+        function drawParticle(ctx, x, y, color) {
+            if (color) {
+                ctx.fillStyle = color;
+                ctx.fillRect(x * PARTICLE_SIZE, y * PARTICLE_SIZE, PARTICLE_SIZE, PARTICLE_SIZE);
+            }
+        }
+
+        function generateBlock() {
+            const keys = Object.keys(TETROMINOES);
+            const randomKey = keys[Math.floor(Math.random() * keys.length)];
+            const blockData = TETROMINOES[randomKey];
+            return {
+                shape: blockData.shape,
+                color: blockData.color,
+                x: Math.floor(LOGICAL_BOARD_WIDTH / 2) - Math.floor(blockData.shape[0].length / 2),
+                y: 0
+            };
+        }
+        
+        function checkCollision(block, offsetX = 0, offsetY = 0, newShape = block.shape) {
+            for (let r = 0; r < newShape.length; r++) {
+                for (let c = 0; c < newShape[r].length; c++) {
+                    if (newShape[r][c] === 1) {
+                        const logicalX = block.x + c + offsetX;
+                        const logicalY = block.y + r + offsetY;
+                        
+                        const particleX_start = logicalX * SUBDIVISION;
+                        const particleY_start = logicalY * SUBDIVISION;
+
+                        for (let py = 0; py < SUBDIVISION; py++) {
+                            for (let px = 0; px < SUBDIVISION; px++) {
+                                const checkX = particleX_start + px;
+                                const checkY = particleY_start + py;
+
+                                if (checkX < 0 || checkX >= PARTICLE_GRID_WIDTH || checkY >= PARTICLE_GRID_HEIGHT) {
+                                    return true;
+                                }
+                                if (checkY >= 0 && gameBoard[checkY][checkX] !== null) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        function mergeBlock() {
+            for (let r = 0; r < currentBlock.shape.length; r++) {
+                for (let c = 0; c < currentBlock.shape[r].length; c++) {
+                    if (currentBlock.shape[r][c] === 1) {
+                        const particleX_start = (currentBlock.x + c) * SUBDIVISION;
+                        const particleY_start = (currentBlock.y + r) * SUBDIVISION;
+
+                        for (let py = 0; py < SUBDIVISION; py++) {
+                            for (let px = 0; px < SUBDIVISION; px++) {
+                                const placeX = particleX_start + px;
+                                const placeY = particleY_start + py;
+                                if (placeY >= 0 && placeY < PARTICLE_GRID_HEIGHT && placeX >= 0 && placeX < PARTICLE_GRID_WIDTH) {
+                                    gameBoard[placeY][placeX] = { color: currentBlock.color };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            currentBlock = null;
+            isSandFalling = true;
+        }
+
+        function rotateShape(shape) {
+            const newShape = shape[0].map((_, colIndex) => shape.map(row => row[colIndex]).reverse());
+            return newShape;
+        }
+
+        function applySandPhysics() {
+            let sandMoved = false;
+            for (let y = PARTICLE_GRID_HEIGHT - 2; y >= 0; y--) {
+                for (let x = 0; x < PARTICLE_GRID_WIDTH; x++) {
+                    if (gameBoard[y][x] !== null) {
+                        if (y + 1 < PARTICLE_GRID_HEIGHT && gameBoard[y + 1][x] === null) {
+                            gameBoard[y + 1][x] = gameBoard[y][x];
+                            gameBoard[y][x] = null;
+                            sandMoved = true;
+                        } else {
+                            const canFallLeft = x - 1 >= 0 && y + 1 < PARTICLE_GRID_HEIGHT && gameBoard[y + 1][x - 1] === null;
+                            const canFallRight = x + 1 < PARTICLE_GRID_WIDTH && y + 1 < PARTICLE_GRID_HEIGHT && gameBoard[y + 1][x + 1] === null;
+                            if (canFallLeft && canFallRight) {
+                                const direction = Math.random() < 0.5 ? -1 : 1;
+                                gameBoard[y + 1][x + direction] = gameBoard[y][x];
+                                gameBoard[y][x] = null;
+                                sandMoved = true;
+                            } else if (canFallLeft) {
+                                gameBoard[y + 1][x - 1] = gameBoard[y][x];
+                                gameBoard[y][x] = null;
+                                sandMoved = true;
+                            } else if (canFallRight) {
+                                gameBoard[y + 1][x + 1] = gameBoard[y][x];
+                                gameBoard[y][x] = null;
+                                sandMoved = true;
+                            }
+                        }
+                    }
+                }
+            }
+            return sandMoved;
+        }
+
+        /**
+         * Finds and clears connected groups of same-colored sand that touch both side borders.
+         * @returns {number} The total number of particles cleared.
+         */
+        function clearConnectedSand() {
+            const visited = new Set();
+            let totalParticlesCleared = 0;
+
+            for (let y = 0; y < PARTICLE_GRID_HEIGHT; y++) {
+                for (let x = 0; x < PARTICLE_GRID_WIDTH; x++) {
+                    const coord = `${x},${y}`;
+                    if (gameBoard[y][x] !== null && !visited.has(coord)) {
+                        const component = [];
+                        const queue = [[x, y]];
+                        const colorToMatch = gameBoard[y][x].color;
+                        let touchesLeft = false;
+                        let touchesRight = false;
+
+                        visited.add(coord);
+
+                        while (queue.length > 0) {
+                            const [cx, cy] = queue.shift();
+                            component.push([cx, cy]);
+
+                            if (cx === 0) touchesLeft = true;
+                            if (cx === PARTICLE_GRID_WIDTH - 1) touchesRight = true;
+
+                            const neighbors = [[cx, cy - 1], [cx, cy + 1], [cx - 1, cy], [cx + 1, cy]];
+                            for (const [nx, ny] of neighbors) {
+                                const neighborCoord = `${nx},${ny}`;
+                                if (nx >= 0 && nx < PARTICLE_GRID_WIDTH && ny >= 0 && ny < PARTICLE_GRID_HEIGHT &&
+                                    !visited.has(neighborCoord) && gameBoard[ny][nx] !== null &&
+                                    gameBoard[ny][nx].color === colorToMatch) {
+                                    visited.add(neighborCoord);
+                                    queue.push([nx, ny]);
+                                }
+                            }
+                        }
+
+                        if (touchesLeft && touchesRight) {
+                            totalParticlesCleared += component.length;
+                            for (const [px, py] of component) {
+                                gameBoard[py][px] = null;
+                            }
+                        }
+                    }
+                }
+            }
+            return totalParticlesCleared;
+        }
+        
+        /**
+         * Updates score and level based on the number of particles cleared.
+         * @param {number} clearedParticles The number of particles cleared.
+         */
+        function updateScoreAndLevel(clearedParticles) {
+            if (clearedParticles > 0) {
+                // Award points based on the number of particles cleared
+                score += clearedParticles * level;
+                scoreDisplay.textContent = score;
+
+                if (Math.floor(score / 5000) >= level) { // Level up every 5000 points
+                    level++;
+                    levelDisplay.textContent = level;
+                    dropInterval = Math.max(100, dropInterval * 0.9);
+                    showMessageBox(`Level Up! Lvl ${level}`, 'success');
+                }
+            }
+        }
+
+        function drawBoard() {
+            gameCtx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+            gameCtx.fillStyle = BOARD_COLOR;
+            gameCtx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+            for (let y = 0; y < PARTICLE_GRID_HEIGHT; y++) {
+                for (let x = 0; x < PARTICLE_GRID_WIDTH; x++) {
+                    if (gameBoard[y][x] !== null) {
+                        drawParticle(gameCtx, x, y, gameBoard[y][x].color);
+                    }
+                }
+            }
+        }
+
+        function drawCurrentBlock() {
+            if (currentBlock) {
+                const { shape, color, x: logicalX, y: logicalY } = currentBlock;
+                for (let r = 0; r < shape.length; r++) {
+                    for (let c = 0; c < shape[r].length; c++) {
+                        if (shape[r][c] === 1) {
+                            const particleX_start = (logicalX + c) * SUBDIVISION;
+                            const particleY_start = (logicalY + r) * SUBDIVISION;
+                            for (let py = 0; py < SUBDIVISION; py++) {
+                                for (let px = 0; px < SUBDIVISION; px++) {
+                                    drawParticle(gameCtx, particleX_start + px, particleY_start + py, color);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function drawNextBlock() {
+            nextBlockCtx.clearRect(0, 0, nextBlockCanvas.width, nextBlockCanvas.height);
+            if (nextBlock) {
+                const { shape, color } = nextBlock;
+                let minRow = shape.length, maxRow = -1, minCol = shape[0].length, maxCol = -1;
+                for (let r = 0; r < shape.length; r++) {
+                    for (let c = 0; c < shape[r].length; c++) {
+                        if (shape[r][c]) {
+                            minRow = Math.min(minRow, r); maxRow = Math.max(maxRow, r);
+                            minCol = Math.min(minCol, c); maxCol = Math.max(maxCol, c);
+                        }
+                    }
+                }
+                const shapeWidth = (maxCol - minCol + 1);
+                const shapeHeight = (maxRow - minRow + 1);
+                const PREVIEW_PARTICLE_SIZE = 5;
+                const totalWidth = shapeWidth * SUBDIVISION * PREVIEW_PARTICLE_SIZE;
+                const totalHeight = shapeHeight * SUBDIVISION * PREVIEW_PARTICLE_SIZE;
+                const startX = (nextBlockCanvas.width - totalWidth) / 2;
+                const startY = (nextBlockCanvas.height - totalHeight) / 2;
+
+                nextBlockCtx.fillStyle = color;
+                for (let y = minRow; y <= maxRow; y++) {
+                    for (let x = minCol; x <= maxCol; x++) {
+                        if (shape[y][x]) {
+                            for (let py = 0; py < SUBDIVISION; py++) {
+                                for (let px = 0; px < SUBDIVISION; px++) {
+                                    const drawX = startX + ((x - minCol) * SUBDIVISION + px) * PREVIEW_PARTICLE_SIZE;
+                                    const drawY = startY + ((y - minRow) * SUBDIVISION + py) * PREVIEW_PARTICLE_SIZE;
+                                    nextBlockCtx.fillRect(drawX, drawY, PREVIEW_PARTICLE_SIZE, PREVIEW_PARTICLE_SIZE);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        function handleKeyPress(event) {
+            if (gameOver || !gameStarted || !currentBlock) return;
+            switch (event.key) {
+                case 'ArrowLeft': if (!checkCollision(currentBlock, -1, 0)) currentBlock.x--; break;
+                case 'ArrowRight': if (!checkCollision(currentBlock, 1, 0)) currentBlock.x++; break;
+                case 'ArrowDown':
+                    if (!checkCollision(currentBlock, 0, 1)) {
+                        currentBlock.y++; score += 1;
+                    } else { mergeBlock(); }
+                    lastDropTime = performance.now();
+                    break;
+                case 'ArrowUp':
+                    const rotated = rotateShape(currentBlock.shape);
+                    if (!checkCollision(currentBlock, 0, 0, rotated)) { currentBlock.shape = rotated; }
+                    break;
+                case ' ':
+                    event.preventDefault();
+                    while (!checkCollision(currentBlock, 0, 1)) { currentBlock.y++; score += 2; }
+                    mergeBlock();
+                    return;
+            }
+            drawGame();
+        }
+
+        function spawnNewBlock() {
+            currentBlock = nextBlock;
+            nextBlock = generateBlock();
+            drawNextBlock();
+            if (checkCollision(currentBlock)) {
+                gameOver = true;
+                gameOverMessage.classList.remove('hidden');
+                startButton.textContent = 'Restart Game';
+                showMessageBox('Game Over!', 'error');
+                cancelAnimationFrame(animationFrameId);
+            }
+        }
+        
+        function gameLoop(currentTime) {
+            if (gameOver) return;
+            if (isSandFalling) {
+                if (currentTime - lastSandFallTime > sandFallInterval) {
+                    const sandMoved = applySandPhysics();
+                    if (!sandMoved) {
+                        const clearedParticles = clearConnectedSand();
+                        if (clearedParticles > 0) {
+                            updateScoreAndLevel(clearedParticles);
+                            // Don't spawn a new block yet, let the remaining sand settle
+                        } else {
+                            // Only spawn a new block if nothing was cleared and sand is stable
+                            isSandFalling = false;
+                            spawnNewBlock();
+                        }
+                    }
+                    lastSandFallTime = currentTime;
+                }
+            } else if (currentBlock) {
+                if (currentTime - lastDropTime > dropInterval) {
+                    if (!checkCollision(currentBlock, 0, 1)) {
+                        currentBlock.y++;
+                    } else {
+                        mergeBlock();
+                    }
+                    lastDropTime = currentTime;
+                }
+            }
+            drawGame();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        function drawGame() {
+            drawBoard();
+            drawCurrentBlock();
+        }
+
+        function startGame() {
+            initializeBoard();
+            score = 0; level = 1; gameOver = false; gameStarted = true; isSandFalling = false;
+            dropInterval = 1000;
+            scoreDisplay.textContent = score;
+            levelDisplay.textContent = level;
+            gameOverMessage.classList.add('hidden');
+            startButton.textContent = 'Restart Game';
+            showMessageBox('Game Started!', 'info');
+            nextBlock = generateBlock();
+            spawnNewBlock();
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            lastDropTime = performance.now();
+            lastSandFallTime = performance.now();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        document.addEventListener('keydown', handleKeyPress);
+        startButton.addEventListener('click', startGame);
+
+        function init() {
+            gameCanvas.width = PARTICLE_GRID_WIDTH * PARTICLE_SIZE;
+            gameCanvas.height = PARTICLE_GRID_HEIGHT * PARTICLE_SIZE;
+            initializeBoard();
+            drawBoard();
+            showMessageBox('Press Start!', 'info');
+        }
+        init();
+    </script>
+</body>
+</html>
